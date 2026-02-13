@@ -1,6 +1,8 @@
-# IMAP Connector
+# Claude IMAP Connector
 
-A generic IMAP/SMTP email connector for Claude. Works with any IMAP-compatible email provider — IONOS, Gmail, Outlook, Fastmail, self-hosted servers, and more.
+A universal MCP (Model Context Protocol) server that connects Claude to any IMAP/SMTP email account. Works with IONOS, Gmail, Outlook, Fastmail, self-hosted servers, and more.
+
+This MCP server enables Claude to interact with your email through natural language commands. Read, search, send, and organize emails directly from your Claude conversations.
 
 ## Features
 
@@ -22,7 +24,7 @@ Set these in your system environment or Claude configuration:
 | `IMAP_PORT` | IMAP server port (default: 993) | `993` |
 | `SMTP_HOST` | SMTP server hostname | `smtp.ionos.de` |
 | `SMTP_PORT` | SMTP server port (default: 587) | `587` |
-| `EMAIL_ADDRESS` | Your email address (used for login) | `info@ruderverein.de` |
+| `EMAIL_ADDRESS` | Your email address (used for login) | `your-email@example.com` |
 | `EMAIL_PASSWORD` | Email password or app-specific password | `your-password` |
 
 ### Common Provider Settings
@@ -71,3 +73,39 @@ The connector exposes these tools for direct use:
 - **Connection refused**: Verify IMAP_HOST and SMTP_HOST are correct for your provider
 - **Authentication failed**: Double-check EMAIL_ADDRESS and EMAIL_PASSWORD; some providers require app-specific passwords
 - **Folder not found**: Use `/mail-check` with `list_folders` to see available folder names — they vary by provider and language
+
+## Quick Start
+
+1. **Copy the example configuration**:
+   ```bash
+   cp .mcp.json.example .mcp.json
+   ```
+
+2. **Edit `.mcp.json`** with your email provider settings
+
+3. **Install in Claude**:
+   - Place this folder in your Claude plugins directory
+   - Restart Claude to load the connector
+
+4. **Test it**:
+   ```
+   /mail-check
+   ```
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- Setting up the development environment
+- Code style and standards
+- Submitting pull requests
+- Feature ideas and enhancements
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/SquaredP/Claude-IMAP-Connector/issues)
+- **Community**: Join the Claude community to discuss email automation workflows
+- **Security**: For security concerns, please review our security practices in CONTRIBUTING.md

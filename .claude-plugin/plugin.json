@@ -1,9 +1,9 @@
 {
   "name": "imap-connector",
   "version": "0.1.0",
-  "description": "Generic IMAP/SMTP email connector — read, search, send, and manage emails from any IMAP-compatible provider",
+  "description": "MCP server for Claude — read, search, send, and manage emails from any IMAP/SMTP provider (Gmail, Outlook, IONOS, and more)",
   "author": {
     "name": "Patrick Prodoehl"
   },
-  "keywords": ["email", "imap", "smtp", "mail", "inbox"]
+  "keywords": ["email", "imap", "smtp", "mail", "inbox", "mcp", "claude", "connector"]
 }

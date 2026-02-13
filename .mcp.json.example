@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "imap-connector": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/imap_server.py"],
+      "env": {
+        "IMAP_HOST": "imap.example.com",
+        "IMAP_PORT": "993",
+        "SMTP_HOST": "smtp.example.com",
+        "SMTP_PORT": "587",
+        "EMAIL_ADDRESS": "your-email@example.com",
+        "EMAIL_PASSWORD": "your-app-password-here"
+      }
+    }
+  }
+}
