@@ -1,0 +1,9 @@
+{
+  "name": "imap-connector",
+  "version": "0.1.0",
+  "description": "Generic IMAP/SMTP email connector — read, search, send, and manage emails from any IMAP-compatible provider",
+  "author": {
+    "name": "Patrick Prodoehl"
+  },
+  "keywords": ["email", "imap", "smtp", "mail", "inbox"]
+}
