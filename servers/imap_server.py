@@ -11,6 +11,8 @@ Environment variables:
   IMAP_PORT      — IMAP server port (default: 993)
   SMTP_HOST      — SMTP server hostname (e.g. smtp.ionos.de)
   SMTP_PORT      — SMTP server port (default: 587)
+  TLS_CA_FILE    — PEM file with extra trusted certificate(s), e.g. a self-signed server cert
+  TLS_VERIFY     — "true" (default); "false" disables certificate checks (insecure)
   EMAIL_ADDRESS  — Full email address for login
   EMAIL_PASSWORD — Password or app-specific password
 """
@@ -71,6 +73,19 @@ def make_error(req_id, code, message):
 # IMAP helpers
 # ---------------------------------------------------------------------------
 
+def make_ssl_context():
+    """TLS context for IMAP and SMTP, honouring TLS_CA_FILE and TLS_VERIFY."""
+    ctx = ssl.create_default_context()
+    ca_file = os.environ.get("TLS_CA_FILE", "")
+    if ca_file:
+        ctx.load_verify_locations(cafile=ca_file)
+    if os.environ.get("TLS_VERIFY", "true").strip().lower() in ("false", "0", "no"):
+        print("WARNING: TLS_VERIFY is off; server certificates are not checked.", file=sys.stderr)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 def get_imap_connection():
     host = os.environ.get("IMAP_HOST", "")
     port = int(os.environ.get("IMAP_PORT", "993"))
@@ -78,7 +93,7 @@ def get_imap_connection():
     password = os.environ.get("EMAIL_PASSWORD", "")
     if not host or not user or not password:
         raise ValueError("Missing IMAP configuration. Set IMAP_HOST, EMAIL_ADDRESS, and EMAIL_PASSWORD.")
-    conn = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context())
+    conn = imaplib.IMAP4_SSL(host, port, ssl_context=make_ssl_context())
     conn.login(user, password)
     return conn
 
@@ -343,7 +358,7 @@ def tool_send_email(to, subject, body, cc="", bcc="", reply_to_id="", reply_to_f
         recipients += [addr.strip() for addr in bcc.split(",")]
 
     with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls(context=ssl.create_default_context())
+        server.starttls(context=make_ssl_context())
         server.login(user, password)
         server.sendmail(user, recipients, msg.as_string())
 
