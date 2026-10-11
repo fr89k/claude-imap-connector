@@ -79,6 +79,11 @@ def get_imap_connection():
         raise ValueError("Missing IMAP configuration. Set IMAP_HOST, EMAIL_ADDRESS, and EMAIL_PASSWORD.")
     conn = imaplib.IMAP4_SSL(host, port)
     conn.login(user, password)
+    caps = get_capabilities(conn)
+    if "UTF8=ACCEPT" in caps and "ENABLE" in caps:
+        # imaplib checks the pre-login capabilities in enable(); refresh them first
+        conn.capabilities = tuple(caps)
+        conn.enable("UTF8=ACCEPT")
     return conn
 
 
@@ -128,6 +133,39 @@ def search_criterion(key, value):
     if key == "TEXT":
         return f"OR SUBJECT {imap_quote(value)} BODY {imap_quote(value)}"
     return f"{key} {imap_quote(value)}"
+
+
+def uid_search(conn, criteria, literal=None):
+    """Run UID SEARCH; with literal, it is sent as the value of the last criterion."""
+    if literal is None:
+        status, data = conn.uid("SEARCH", f'({" ".join(criteria) or "ALL"})')
+    else:
+        conn.literal = literal.encode("utf-8")
+        status, data = conn.uid("SEARCH", "CHARSET", "UTF-8", *criteria)
+    if status != "OK" or not data or data[0] is None:
+        raise RuntimeError(f"Search failed: {data}")
+    return set(data[0].split())
+
+
+def search_uids(conn, terms):
+    """Return the UIDs matching all terms, newest first."""
+    if conn.utf8_enabled or all(value.isascii() for _, value in terms):
+        uids = uid_search(conn, [search_criterion(key, value) for key, value in terms])
+    else:
+        # Without UTF8=ACCEPT, non-ASCII values must go as literals, and imaplib
+        # sends only one (trailing) literal per command. Search once per
+        # non-ASCII value, repeating the ASCII criteria, and intersect.
+        base = [search_criterion(key, value) for key, value in terms if value.isascii()]
+        uids = None
+        for key, value in terms:
+            if value.isascii():
+                continue
+            if key == "TEXT":
+                found = uid_search(conn, base + ["SUBJECT"], value) | uid_search(conn, base + ["BODY"], value)
+            else:
+                found = uid_search(conn, base + [key], value)
+            uids = found if uids is None else uids & found
+    return sorted(uids, key=int, reverse=True)
 
 
 def decode_mime_header(raw):
@@ -289,14 +327,9 @@ def tool_search_emails(query, folder="INBOX", limit=20):
 
         criteria = [search_criterion(key, value) for key, value in parse_search_query(query)]
         search_str = " ".join(criteria) if criteria else "ALL"
-        status, data = conn.uid("SEARCH", f'({search_str})')
-
-        if status != "OK":
-            return {"emails": [], "total": 0, "query": search_str}
-
-        ids = data[0].split()
+        ids = search_uids(conn, parse_search_query(query))
         total = len(ids)
-        ids = list(reversed(ids))[:limit]
+        ids = ids[:limit]
 
         emails = []
         for uid in ids:
