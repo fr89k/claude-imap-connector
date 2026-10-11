@@ -18,6 +18,7 @@ Environment variables:
   IMAP_READ_ONLY — "true" (default) hides send/move/delete; "false" enables them
 """
 
+import base64
 import os
 import sys
 import json
@@ -120,6 +121,75 @@ def imap_quote(value):
     if "\r" in value or "\n" in value:
         raise ValueError("IMAP strings must not contain line breaks.")
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def imap_utf7_encode(name):
+    """Encode a folder name as IMAP modified UTF-7 (RFC 3501, 5.1.3)."""
+    out, pending = [], []
+
+    def flush():
+        if pending:
+            b64 = base64.b64encode("".join(pending).encode("utf-16-be")).decode("ascii")
+            out.append("&" + b64.rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for ch in name:
+        if 0x20 <= ord(ch) <= 0x7E:
+            flush()
+            out.append("&-" if ch == "&" else ch)
+        else:
+            pending.append(ch)
+    flush()
+    return "".join(out)
+
+
+def imap_utf7_decode(name):
+    """Decode an IMAP modified UTF-7 folder name."""
+    def repl(m):
+        b64 = m.group(1).replace(",", "/")
+        if not b64:
+            return "&"
+        return base64.b64decode(b64 + "=" * (-len(b64) % 4)).decode("utf-16-be")
+    return re.sub(r"&([A-Za-z0-9+,]*)-", repl, name)
+
+
+def quote_mailbox(conn, name):
+    """Quote a folder name for a command, in modified UTF-7 unless UTF8=ACCEPT is on."""
+    if "\r" in name or "\n" in name:
+        raise ValueError("IMAP strings must not contain line breaks.")
+    return imap_quote(name if conn.utf8_enabled else imap_utf7_encode(name))
+
+
+LIST_LINE = re.compile(r'^\((?P<flags>[^)]*)\) (?P<delim>NIL|"(?:[^"\\]|\\.)*") (?P<name>.*)$')
+
+
+def parse_list_entry(conn, entry):
+    """Parse one LIST response item into (flags, delimiter, name), or None."""
+    if isinstance(entry, tuple):  # name sent as a literal
+        line, name = entry[0].decode("utf-8", "replace"), entry[1].decode("utf-8", "replace")
+        m = LIST_LINE.match(line)
+    elif isinstance(entry, bytes):
+        m = LIST_LINE.match(entry.decode("utf-8", "replace"))
+        name = m.group("name") if m else None
+    else:
+        return None
+    if not m:
+        return None
+    if name.startswith('"') and name.endswith('"'):
+        name = re.sub(r"\\(.)", r"\1", name[1:-1])
+    if not conn.utf8_enabled:
+        name = imap_utf7_decode(name)
+    delim = m.group("delim")
+    delim = None if delim == "NIL" else re.sub(r"\\(.)", r"\1", delim[1:-1])
+    return set(m.group("flags").split()), delim, name
+
+
+def list_mailboxes(conn):
+    """Return [(flags, delimiter, name)] for all folders."""
+    status, data = conn.list()
+    if status != "OK":
+        raise RuntimeError(f"LIST failed: {data}")
+    return [p for p in (parse_list_entry(conn, e) for e in data) if p]
 
 
 SEARCH_KEYS = {"subject": "SUBJECT", "from": "FROM", "to": "TO", "since": "SINCE", "before": "BEFORE"}
@@ -252,22 +322,7 @@ def tool_list_folders():
     """List all mailbox folders."""
     conn = get_imap_connection()
     try:
-        status, folders_raw = conn.list()
-        folders = []
-        for f in folders_raw:
-            if isinstance(f, bytes):
-                # Parse folder name from IMAP LIST response
-                match = re.search(rb'"([^"]*)" "?([^"]*)"?$', f)
-                if match:
-                    folders.append(match.group(2).decode("utf-8", errors="replace"))
-                else:
-                    decoded = f.decode("utf-8", errors="replace")
-                    parts = decoded.rsplit('" ', 1)
-                    if len(parts) == 2:
-                        folders.append(parts[1].strip('"'))
-                    else:
-                        folders.append(decoded)
-        return {"folders": folders}
+        return {"folders": [name for _, _, name in list_mailboxes(conn)]}
     finally:
         conn.logout()
 
@@ -276,7 +331,7 @@ def tool_list_emails(folder="INBOX", limit=20, offset=0):
     """List emails in a folder, most recent first."""
     conn = get_imap_connection()
     try:
-        status, _ = conn.select(imap_quote(folder), readonly=True)
+        status, _ = conn.select(quote_mailbox(conn, folder), readonly=True)
         if status != "OK":
             return {"error": f"Could not open folder: {folder}"}
 
@@ -312,7 +367,7 @@ def tool_read_email(email_id, folder="INBOX"):
     """Read a single email by its ID."""
     conn = get_imap_connection()
     try:
-        conn.select(imap_quote(folder), readonly=True)
+        conn.select(quote_mailbox(conn, folder), readonly=True)
         status, msg_data = conn.uid("FETCH", str(email_id), "(RFC822)")
         if status != "OK" or msg_data[0] is None:
             return {"error": f"Email {email_id} not found in {folder}"}
@@ -342,7 +397,7 @@ def tool_search_emails(query, folder="INBOX", limit=20):
     """
     conn = get_imap_connection()
     try:
-        conn.select(imap_quote(folder), readonly=True)
+        conn.select(quote_mailbox(conn, folder), readonly=True)
 
         criteria = [search_criterion(key, value) for key, value in parse_search_query(query)]
         search_str = " ".join(criteria) if criteria else "ALL"
@@ -389,7 +444,7 @@ def tool_send_email(to, subject, body, cc="", bcc="", reply_to_id="", reply_to_f
     if reply_to_id:
         try:
             conn = get_imap_connection()
-            conn.select(imap_quote(reply_to_folder), readonly=True)
+            conn.select(quote_mailbox(conn, reply_to_folder), readonly=True)
             status, msg_data = conn.uid("FETCH", str(reply_to_id), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES)])")
             if status == "OK" and msg_data[0] is not None:
                 raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
@@ -423,17 +478,17 @@ def tool_move_email(email_id, source_folder="INBOX", target_folder="Archive"):
     """Move an email to a different folder."""
     conn = get_imap_connection()
     try:
-        status, _ = conn.select(imap_quote(source_folder))
+        status, _ = conn.select(quote_mailbox(conn, source_folder))
         if status != "OK":
             return {"error": f"Could not open folder: {source_folder}"}
         uid = str(email_id)
         caps = get_capabilities(conn)
         if "MOVE" in caps:
-            status, _ = conn.uid("MOVE", uid, imap_quote(target_folder))
+            status, _ = conn.uid("MOVE", uid, quote_mailbox(conn, target_folder))
             if status != "OK":
                 return {"error": f"Failed to move email to {target_folder}"}
             return {"status": "moved", "email_id": uid, "from": source_folder, "to": target_folder}
-        status, _ = conn.uid("COPY", uid, imap_quote(target_folder))
+        status, _ = conn.uid("COPY", uid, quote_mailbox(conn, target_folder))
         if status != "OK":
             return {"error": f"Failed to copy email to {target_folder}"}
         conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
@@ -452,19 +507,11 @@ def tool_delete_email(email_id, folder="INBOX"):
     # Try common trash folder names
     conn = get_imap_connection()
     try:
-        status, folders_raw = conn.list()
         trash_folder = None
         trash_names = ["Trash", "Deleted", "Papierkorb", "Deleted Items", "Deleted Messages"]
-        for f in folders_raw:
-            if isinstance(f, bytes):
-                decoded = f.decode("utf-8", errors="replace")
-                for tn in trash_names:
-                    if tn.lower() in decoded.lower():
-                        match = re.search(r'"([^"]*)" "?([^"]*)"?$', f)
-                        if match:
-                            trash_folder = match.group(2).decode("utf-8", errors="replace")
-                        break
-            if trash_folder:
+        for _, _, name in list_mailboxes(conn):
+            if any(tn.lower() in name.lower() for tn in trash_names):
+                trash_folder = name
                 break
         conn.logout()
 
@@ -474,7 +521,7 @@ def tool_delete_email(email_id, folder="INBOX"):
             # Fallback: flag as deleted
             conn = get_imap_connection()
             try:
-                status, _ = conn.select(imap_quote(folder))
+                status, _ = conn.select(quote_mailbox(conn, folder))
                 if status != "OK":
                     return {"error": f"Could not open folder: {folder}"}
                 uid = str(email_id)
