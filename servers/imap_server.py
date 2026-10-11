@@ -22,6 +22,7 @@ import email
 import imaplib
 import smtplib
 import re
+import ssl
 from datetime import datetime, timedelta
 from email import policy
 from email.header import decode_header
@@ -77,7 +78,7 @@ def get_imap_connection():
     password = os.environ.get("EMAIL_PASSWORD", "")
     if not host or not user or not password:
         raise ValueError("Missing IMAP configuration. Set IMAP_HOST, EMAIL_ADDRESS, and EMAIL_PASSWORD.")
-    conn = imaplib.IMAP4_SSL(host, port)
+    conn = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context())
     conn.login(user, password)
     return conn
 
@@ -342,7 +343,7 @@ def tool_send_email(to, subject, body, cc="", bcc="", reply_to_id="", reply_to_f
         recipients += [addr.strip() for addr in bcc.split(",")]
 
     with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
+        server.starttls(context=ssl.create_default_context())
         server.login(user, password)
         server.sendmail(user, recipients, msg.as_string())
 
