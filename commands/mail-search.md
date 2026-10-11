@@ -9,9 +9,10 @@ Search emails based on the user's query: $ARGUMENTS
 Translate the user's natural language request into structured IMAP search criteria:
 - "emails from Max" → `from:Max`
 - "about training" → `subject:training`
+- "about the weekly report" → `subject:"weekly report"` (quote values with spaces)
 - "since last week" → `since:YYYY-MM-DD` (calculate the date)
 - "before January" → `before:YYYY-MM-DD`
-- Combine multiple criteria as needed.
+- Combine multiple criteria as needed; all of them must match.
 
 1. Call `search_emails` with the appropriate query.
 2. Present matching emails in a concise list: sender, subject, date.
