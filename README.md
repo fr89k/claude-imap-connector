@@ -56,7 +56,7 @@ The connector exposes these tools for direct use:
 - `list_folders` — List all mailbox folders
 - `list_emails` — List emails in a folder with pagination
 - `read_email` — Read a single email's full content
-- `search_emails` — Search with structured queries (`from:`, `subject:`, `since:`, `before:`)
+- `search_emails` — Search with `from:`, `to:`, `subject:`, `since:`, `before:` and free text; quote multi-word values (`subject:"weekly report"`); all terms must match
 - `send_email` — Send an email with optional CC/BCC and reply threading
 - `move_email` — Move an email between folders
 - `delete_email` — Move an email to trash
