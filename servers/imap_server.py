@@ -13,7 +13,7 @@ Environment variables:
   SMTP_PORT      — SMTP server port (default: 587)
   EMAIL_ADDRESS  — Full email address for login
   EMAIL_PASSWORD — Password or app-specific password
-  IMAP_READ_ONLY — "true" (default) hides send/move/delete; "false" enables them
+  IMAP_READ_ONLY — "true" hides send/move/delete; "false" (default) enables them
 """
 
 import os
@@ -411,7 +411,8 @@ WRITE_TOOLS = {"send_email", "move_email", "delete_email"}
 
 
 def is_read_only():
-    return os.environ.get("IMAP_READ_ONLY", "true").strip().lower() not in ("false", "0", "no")
+    """Return True when IMAP_READ_ONLY is set to true/1/yes (default: false)."""
+    return os.environ.get("IMAP_READ_ONLY", "false").strip().lower() in ("true", "1", "yes")
 
 
 TOOLS = {

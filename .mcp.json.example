@@ -10,7 +10,7 @@
         "SMTP_PORT": "587",
         "EMAIL_ADDRESS": "your-email@example.com",
         "EMAIL_PASSWORD": "your-app-password-here",
-        "IMAP_READ_ONLY": "true"
+        "IMAP_READ_ONLY": "false"
       }
     }
   }
