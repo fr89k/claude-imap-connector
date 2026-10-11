@@ -277,6 +277,34 @@ def search_uids(conn, terms):
     return sorted(uids, key=int, reverse=True)
 
 
+def fetch_headers(conn, uids):
+    """Fetch From/Subject/Date for all uids in one command; keeps the order of uids."""
+    if not uids:
+        return []
+    uids = [u.decode() if isinstance(u, bytes) else str(u) for u in uids]
+    status, data = conn.uid("FETCH", ",".join(uids), "(UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+    if status != "OK":
+        raise RuntimeError(f"FETCH failed: {data}")
+    headers = {}
+    for item in data:
+        if not isinstance(item, tuple):
+            continue
+        m = re.search(rb"UID (\d+)", item[0])
+        if m:
+            headers[m.group(1).decode()] = email.message_from_bytes(item[1], policy=policy.default)
+    emails = []
+    for uid in uids:
+        msg = headers.get(uid)
+        if msg is not None:
+            emails.append({
+                "id": uid,
+                "from": decode_mime_header(msg.get("From", "")),
+                "subject": decode_mime_header(msg.get("Subject", "(no subject)")),
+                "date": decode_mime_header(msg.get("Date", "")),
+            })
+    return emails
+
+
 def decode_mime_header(raw):
     """Decode a MIME-encoded header value to a plain string."""
     if raw is None:
@@ -365,18 +393,7 @@ def tool_list_emails(folder="INBOX", limit=20, offset=0):
         ids = list(reversed(ids))
         page = ids[offset : offset + limit]
 
-        emails = []
-        for uid in page:
-            status, msg_data = conn.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            if status == "OK" and msg_data[0] is not None:
-                raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
-                msg = email.message_from_bytes(raw, policy=policy.default)
-                emails.append({
-                    "id": uid.decode(),
-                    "from": decode_mime_header(msg.get("From", "")),
-                    "subject": decode_mime_header(msg.get("Subject", "(no subject)")),
-                    "date": decode_mime_header(msg.get("Date", "")),
-                })
+        emails = fetch_headers(conn, page)
 
         return {"emails": emails, "total": total, "folder": folder, "offset": offset, "limit": limit}
     finally:
@@ -425,18 +442,7 @@ def tool_search_emails(query, folder="INBOX", limit=20):
         total = len(ids)
         ids = ids[:limit]
 
-        emails = []
-        for uid in ids:
-            status, msg_data = conn.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            if status == "OK" and msg_data[0] is not None:
-                raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
-                msg = email.message_from_bytes(raw, policy=policy.default)
-                emails.append({
-                    "id": uid.decode(),
-                    "from": decode_mime_header(msg.get("From", "")),
-                    "subject": decode_mime_header(msg.get("Subject", "(no subject)")),
-                    "date": decode_mime_header(msg.get("Date", "")),
-                })
+        emails = fetch_headers(conn, ids)
 
         return {"emails": emails, "total": total, "query": search_str}
     finally:
