@@ -109,6 +109,46 @@ def get_capabilities(conn):
     return set(data[0].decode().upper().split())
 
 
+def imap_quote(value):
+    """Return value as an IMAP quoted string, escaping backslashes and quotes."""
+    value = str(value)
+    if "\r" in value or "\n" in value:
+        raise ValueError("IMAP strings must not contain line breaks.")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+SEARCH_KEYS = {"subject": "SUBJECT", "from": "FROM", "to": "TO", "since": "SINCE", "before": "BEFORE"}
+
+
+def parse_search_query(query):
+    """Split a query like 'from:max subject:"weekly report" budget' into (KEY, value) terms.
+
+    Free text (outside key:value pairs) becomes one ("TEXT", phrase) term,
+    matched against subject or body.
+    """
+    terms = []
+    free = []
+    for m in re.finditer(r'(\w+):(?:"([^"]*)"|(\S+))|"([^"]*)"|(\S+)', query):
+        key, quoted_val, val, quoted_free, _ = m.groups()
+        if key and key.lower() in SEARCH_KEYS:
+            terms.append((SEARCH_KEYS[key.lower()], quoted_val if quoted_val is not None else val))
+        else:
+            free.append(quoted_free if quoted_free is not None else m.group(0))
+    if free:
+        terms.append(("TEXT", " ".join(free)))
+    return terms
+
+
+def search_criterion(key, value):
+    """Render one (KEY, value) term as an IMAP SEARCH criterion."""
+    if key in ("SINCE", "BEFORE"):
+        d = datetime.strptime(value, "%Y-%m-%d")
+        return f'{key} {d.strftime("%d-%b-%Y")}'
+    if key == "TEXT":
+        return f"OR SUBJECT {imap_quote(value)} BODY {imap_quote(value)}"
+    return f"{key} {imap_quote(value)}"
+
+
 def decode_mime_header(raw):
     """Decode a MIME-encoded header value to a plain string."""
     if raw is None:
@@ -198,7 +238,7 @@ def tool_list_emails(folder="INBOX", limit=20, offset=0):
     """List emails in a folder, most recent first."""
     conn = get_imap_connection()
     try:
-        status, _ = conn.select(f'"{folder}"', readonly=True)
+        status, _ = conn.select(imap_quote(folder), readonly=True)
         if status != "OK":
             return {"error": f"Could not open folder: {folder}"}
 
@@ -234,7 +274,7 @@ def tool_read_email(email_id, folder="INBOX"):
     """Read a single email by its ID."""
     conn = get_imap_connection()
     try:
-        conn.select(f'"{folder}"', readonly=True)
+        conn.select(imap_quote(folder), readonly=True)
         status, msg_data = conn.uid("FETCH", str(email_id), "(RFC822)")
         if status != "OK" or msg_data[0] is None:
             return {"error": f"Email {email_id} not found in {folder}"}
@@ -264,39 +304,9 @@ def tool_search_emails(query, folder="INBOX", limit=20):
     """
     conn = get_imap_connection()
     try:
-        conn.select(f'"{folder}"', readonly=True)
+        conn.select(imap_quote(folder), readonly=True)
 
-        # Build IMAP search criteria
-        criteria = []
-        if "subject:" in query.lower():
-            match = re.search(r'subject:\s*"?([^"]+)"?', query, re.IGNORECASE)
-            if match:
-                criteria.append(f'SUBJECT "{match.group(1).strip()}"')
-        if "from:" in query.lower():
-            match = re.search(r'from:\s*"?([^"]+)"?', query, re.IGNORECASE)
-            if match:
-                criteria.append(f'FROM "{match.group(1).strip()}"')
-        if "to:" in query.lower():
-            match = re.search(r'to:\s*"?([^"]+)"?', query, re.IGNORECASE)
-            if match:
-                criteria.append(f'TO "{match.group(1).strip()}"')
-        if "since:" in query.lower():
-            match = re.search(r'since:\s*(\d{4}-\d{2}-\d{2})', query, re.IGNORECASE)
-            if match:
-                d = datetime.strptime(match.group(1), "%Y-%m-%d")
-                criteria.append(f'SINCE {d.strftime("%d-%b-%Y")}')
-        if "before:" in query.lower():
-            match = re.search(r'before:\s*(\d{4}-\d{2}-\d{2})', query, re.IGNORECASE)
-            if match:
-                d = datetime.strptime(match.group(1), "%Y-%m-%d")
-                criteria.append(f'BEFORE {d.strftime("%d-%b-%Y")}')
-
-        # If no structured criteria, search in body/subject
-        if not criteria:
-            clean_query = query.strip()
-            if clean_query:
-                criteria.append(f'OR SUBJECT "{clean_query}" BODY "{clean_query}"')
-
+        criteria = [search_criterion(key, value) for key, value in parse_search_query(query)]
         search_str = " ".join(criteria) if criteria else "ALL"
         status, data = conn.uid("SEARCH", f'({search_str})')
 
@@ -346,7 +356,7 @@ def tool_send_email(to, subject, body, cc="", bcc="", reply_to_id="", reply_to_f
     if reply_to_id:
         try:
             conn = get_imap_connection()
-            conn.select(f'"{reply_to_folder}"', readonly=True)
+            conn.select(imap_quote(reply_to_folder), readonly=True)
             status, msg_data = conn.uid("FETCH", str(reply_to_id), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES)])")
             if status == "OK" and msg_data[0] is not None:
                 raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
@@ -380,17 +390,17 @@ def tool_move_email(email_id, source_folder="INBOX", target_folder="Archive"):
     """Move an email to a different folder."""
     conn = get_imap_connection()
     try:
-        status, _ = conn.select(f'"{source_folder}"')
+        status, _ = conn.select(imap_quote(source_folder))
         if status != "OK":
             return {"error": f"Could not open folder: {source_folder}"}
         uid = str(email_id)
         caps = get_capabilities(conn)
         if "MOVE" in caps:
-            status, _ = conn.uid("MOVE", uid, f'"{target_folder}"')
+            status, _ = conn.uid("MOVE", uid, imap_quote(target_folder))
             if status != "OK":
                 return {"error": f"Failed to move email to {target_folder}"}
             return {"status": "moved", "email_id": uid, "from": source_folder, "to": target_folder}
-        status, _ = conn.uid("COPY", uid, f'"{target_folder}"')
+        status, _ = conn.uid("COPY", uid, imap_quote(target_folder))
         if status != "OK":
             return {"error": f"Failed to copy email to {target_folder}"}
         conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
@@ -431,7 +441,7 @@ def tool_delete_email(email_id, folder="INBOX"):
             # Fallback: flag as deleted
             conn = get_imap_connection()
             try:
-                status, _ = conn.select(f'"{folder}"')
+                status, _ = conn.select(imap_quote(folder))
                 if status != "OK":
                     return {"error": f"Could not open folder: {folder}"}
                 uid = str(email_id)
@@ -489,7 +499,7 @@ TOOLS = {
         },
     },
     "search_emails": {
-        "description": "Search emails. Use structured queries like 'from:name@example.com', 'subject:meeting', 'since:2025-01-01', 'before:2025-12-31', or plain text to search subject and body.",
+        "description": "Search emails. Use structured queries like 'from:name@example.com', 'subject:meeting', 'subject:\"weekly report\"', 'since:2025-01-01', 'before:2025-12-31', or plain text to search subject and body. Quote multi-word values; terms are combined with AND.",
         "inputSchema": {
             "type": "object",
             "properties": {
