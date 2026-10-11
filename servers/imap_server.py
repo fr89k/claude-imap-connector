@@ -192,6 +192,26 @@ def list_mailboxes(conn):
     return [p for p in (parse_list_entry(conn, e) for e in data) if p]
 
 
+TRASH_NAMES = ["trash", "deleted items", "deleted messages", "deleted", "papierkorb",
+               "gelöschte elemente", "gelöschte objekte"]
+
+
+def find_trash_folder(mailboxes):
+    """Pick the trash folder: the SPECIAL-USE \\Trash flag, else a well-known name."""
+    for flags, _, name in mailboxes:
+        if "\\trash" in {f.lower() for f in flags}:
+            return name
+    # Compare whole names (last path segment), not substrings: "Trash-Archive" is no trash
+    by_leaf = {}
+    for _, delim, name in mailboxes:
+        leaf = name.rsplit(delim, 1)[-1] if delim else name
+        by_leaf.setdefault(leaf.lower(), name)
+    for trash_name in TRASH_NAMES:
+        if trash_name in by_leaf:
+            return by_leaf[trash_name]
+    return None
+
+
 SEARCH_KEYS = {"subject": "SUBJECT", "from": "FROM", "to": "TO", "since": "SINCE", "before": "BEFORE"}
 
 
@@ -504,15 +524,9 @@ def tool_move_email(email_id, source_folder="INBOX", target_folder="Archive"):
 
 def tool_delete_email(email_id, folder="INBOX"):
     """Move an email to Trash."""
-    # Try common trash folder names
     conn = get_imap_connection()
     try:
-        trash_folder = None
-        trash_names = ["Trash", "Deleted", "Papierkorb", "Deleted Items", "Deleted Messages"]
-        for _, _, name in list_mailboxes(conn):
-            if any(tn.lower() in name.lower() for tn in trash_names):
-                trash_folder = name
-                break
+        trash_folder = find_trash_folder(list_mailboxes(conn))
         conn.logout()
 
         if trash_folder and trash_folder != folder:
